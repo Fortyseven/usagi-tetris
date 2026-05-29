@@ -228,7 +228,6 @@ local function spawn_piece()
   State.PieceX = 2  -- center-ish
   State.PieceY = HIDDEN_ROWS - 1  -- spawn in hidden area (row 1 in 1-indexed)
   State.Cells = get_cells(State.Type, State.Rot)
-  print(string.format("[SPAWN] type=%d rot=%d pos=(%d,%d)", State.Type, State.Rot, State.PieceX, State.PieceY))
 
   -- Reset all timers so the new piece is immediately controllable
   State.RotateTimer = 0
@@ -255,21 +254,8 @@ local function try_rotate()
   local new_rot = State.Rot == 1 and 4 or State.Rot - 1  -- 1→4→3→2→1
   local new_cells = get_cells(State.Type, new_rot)
 
-  print(string.format("[ROTATE] type=%d rot=%d->%d pos=(%d,%d)",
-    State.Type, State.Rot, new_rot, State.PieceX, State.PieceY))
-  print(string.format("  old cells: %d cells", #State.Cells))
-  print(string.format("  new cells: %d cells", #new_cells))
-  for i = 1, #new_cells do
-    local c = new_cells[i]
-    local col = State.PieceX + c[1] + 1
-    local row = State.PieceY + c[2] + 1
-    print(string.format("    cell[%d] offset=(%d,%d) -> board=(%d,%d)", i, c[1], c[2], col, row))
-  end
-
   -- Priority 1: no shift at all
-  local blocked = collides(State.Board, new_cells, State.PieceX, State.PieceY)
-  print(string.format("  kick(0,0): %s", blocked and "BLOCKED" or "OK"))
-  if not blocked then
+  if not collides(State.Board, new_cells, State.PieceX, State.PieceY) then
     State.Rot = new_rot
     State.Cells = new_cells
     State.RotationsThisPiece = State.RotationsThisPiece + 1
@@ -279,21 +265,17 @@ local function try_rotate()
   -- Priority 2: horizontal kicks only (keeps piece at same row)
   for kx = -2, 2 do
     if kx == 0 then goto continue end
-    local kick_blocked = collides(State.Board, new_cells, State.PieceX + kx, State.PieceY)
-    print(string.format("  kick(%d,0): %s", kx, kick_blocked and "BLOCKED" or "OK"))
-    if not kick_blocked then
+    if not collides(State.Board, new_cells, State.PieceX + kx, State.PieceY) then
       State.Rot = new_rot
       State.Cells = new_cells
       State.PieceX = State.PieceX + kx
       State.RotationsThisPiece = State.RotationsThisPiece + 1
-      print(string.format("  SUCCESS: kicked to (%d, %d)", State.PieceX, State.PieceY))
       return true
     end
     ::continue::
   end
 
   -- Rotation blocked (piece too close to edge) — no vertical kicks
-  print("  RESULT: ALL KICKS FAILED")
   return false
 end
 
@@ -354,9 +336,6 @@ function _init()
     UpHeld = false,
     RotationsThisPiece = 0,
 
-    -- Effects
-    RotFlash = 0,
-
     -- Starfield
     Stars = {},
   }
@@ -415,14 +394,6 @@ function _update(dt)
   State.MoveTimer = State.MoveTimer - dt
   State.RotateTimer = State.RotateTimer - dt
   State.SoftTimer = State.SoftTimer - dt
-  if State.RotFlash > 0 then
-    State.RotFlash = State.RotFlash - dt
-    if State.RotFlash < 0 then State.RotFlash = 0 end
-  elseif State.RotFlash < 0 then
-    State.RotFlash = State.RotFlash + dt
-    if State.RotFlash > 0 then State.RotFlash = 0 end
-  end
-
   -- Horizontal movement
   if input.pressed(input.LEFT) and State.MoveTimer <= 0 then
     if not collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
@@ -443,12 +414,8 @@ function _update(dt)
   local up_now = input.key_held(input.KEY_UP) or input.key_held(input.KEY_W)
   local up_edge = up_now and not State.UpHeld
   if up_edge then
-    local success = try_rotate()
-    if success then
+    if try_rotate() then
       sfx.play("rotate")
-      State.RotFlash = 0.25  -- white flash for 250ms
-    else
-      State.RotFlash = -0.15  -- red flash for 150ms
     end
   end
   State.UpHeld = up_now
@@ -616,21 +583,13 @@ function draw_game_board()
   -- Active piece (visible rows only)
   if State.GameState == "playing" and State.Cells then
     local color = PIECE_COLORS[State.Type]
-    local flash
-    if State.RotFlash > 0 then
-      flash = gfx.COLOR_WHITE  -- success flash
-    elseif State.RotFlash < 0 then
-      flash = gfx.COLOR_RED    -- blocked flash
-    else
-      flash = color
-    end
     for i = 1, #State.Cells do
       local c = State.Cells[i]
       local br_row = State.PieceY + c[2] + 1  -- board row (1-indexed)
       if br_row > HIDDEN_ROWS then   -- only draw visible cells
         local x = BOARD_X + (State.PieceX + c[1]) * CELL
         local y = BOARD_Y + (br_row - 1 - HIDDEN_ROWS) * CELL
-        gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, flash)
+        gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, color)
         -- Highlight edge
         gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
         gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
@@ -639,16 +598,9 @@ function draw_game_board()
     end
   end
 
-  -- Pulsing holographic border (flashes on rotation)
-  local border_color
-  if State.RotFlash > 0 then
-    border_color = gfx.COLOR_WHITE  -- success
-  elseif State.RotFlash < 0 then
-    border_color = gfx.COLOR_RED    -- blocked
-  else
-    local pulse = util.flash(usagi.elapsed, 3)
-    border_color = pulse and HOLO or gfx.COLOR_BLUE
-  end
+  -- Pulsing holographic border
+  local pulse = util.flash(usagi.elapsed, 3)
+  local border_color = pulse and HOLO or gfx.COLOR_BLUE
   gfx.rect(BOARD_X - 2, BOARD_Y - 2, BOARD_PX_W + 4, BOARD_PX_H + 4, border_color)
 
   -- Corner accents
