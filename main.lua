@@ -82,31 +82,31 @@ local SHAPES = {
   },
   -- S piece
   {
-    {{0,0},{1,0},{-1,1},{0,1}},   -- rot 1
-    {{0,-1},{0,0},{-1,0},{-1,1}}, -- rot 2
-    {{0,0},{1,0},{-1,1},{0,1}},   -- rot 3
-    {{0,-1},{0,0},{-1,0},{-1,1}}, -- rot 4
+    {{0,0},{1,0},{-1,1},{0,1}},   -- rot 1: horizontal
+    {{-1,-1},{-1,0},{0,0},{0,1}}, -- rot 2: vertical
+    {{0,0},{1,0},{-1,1},{0,1}},   -- rot 3: horizontal
+    {{-1,-1},{-1,0},{0,0},{0,1}}, -- rot 4: vertical
   },
   -- Z piece
   {
-    {{-1,0},{0,0},{0,1},{1,1}},   -- rot 1
-    {{0,-1},{0,0},{1,0},{1,1}},   -- rot 2
-    {{-1,0},{0,0},{0,1},{1,1}},   -- rot 3
-    {{0,-1},{0,0},{1,0},{1,1}},   -- rot 4
+    {{-1,0},{0,0},{0,1},{1,1}},   -- rot 1: horizontal
+    {{0,-1},{0,0},{-1,0},{-1,1}}, -- rot 2: vertical
+    {{-1,0},{0,0},{0,1},{1,1}},   -- rot 3: horizontal
+    {{0,-1},{0,0},{-1,0},{-1,1}}, -- rot 4: vertical
   },
   -- J piece
   {
     {{-1,0},{0,0},{1,0},{-1,-1}},  -- rot 1: J upright
-    {{0,-1},{0,0},{0,1},{1,1}},    -- rot 2: pointing right
+    {{0,-1},{0,0},{0,1},{-1,1}},   -- rot 2: pointing left
     {{-1,0},{0,0},{1,0},{1,1}},    -- rot 3: J inverted
-    {{0,-1},{0,0},{0,1},{-1,-1}},  -- rot 4: pointing left
+    {{0,-1},{0,0},{0,1},{1,-1}},   -- rot 4: pointing right
   },
   -- L piece
   {
     {{-1,0},{0,0},{1,0},{1,-1}},   -- rot 1: L upright
-    {{0,-1},{0,0},{0,1},{-1,1}},   -- rot 2: pointing left
+    {{0,-1},{0,0},{0,1},{-1,-1}},  -- rot 2: pointing left
     {{-1,0},{0,0},{1,0},{-1,1}},   -- rot 3: L inverted
-    {{0,-1},{0,0},{0,1},{1,-1}},   -- rot 4: pointing right
+    {{0,-1},{0,0},{0,1},{1,1}},    -- rot 4: pointing right
   },
 }
 
@@ -228,6 +228,7 @@ local function spawn_piece()
   State.PieceX = 2  -- center-ish
   State.PieceY = HIDDEN_ROWS - 1  -- spawn in hidden area (row 1 in 1-indexed)
   State.Cells = get_cells(State.Type, State.Rot)
+  print(string.format("[SPAWN] type=%d rot=%d pos=(%d,%d)", State.Type, State.Rot, State.PieceX, State.PieceY))
 
   -- Reset all timers so the new piece is immediately controllable
   State.RotateTimer = 0
@@ -251,11 +252,24 @@ end
 -- Helper: try to rotate the current piece (with wall kick)
 --------------------------------------------------------------------------------
 local function try_rotate()
-  local new_rot = (State.Rot % 4) + 1  -- 1→2→3→4→1
+  local new_rot = State.Rot == 1 and 4 or State.Rot - 1  -- 1→4→3→2→1
   local new_cells = get_cells(State.Type, new_rot)
 
+  print(string.format("[ROTATE] type=%d rot=%d->%d pos=(%d,%d)",
+    State.Type, State.Rot, new_rot, State.PieceX, State.PieceY))
+  print(string.format("  old cells: %d cells", #State.Cells))
+  print(string.format("  new cells: %d cells", #new_cells))
+  for i = 1, #new_cells do
+    local c = new_cells[i]
+    local col = State.PieceX + c[1] + 1
+    local row = State.PieceY + c[2] + 1
+    print(string.format("    cell[%d] offset=(%d,%d) -> board=(%d,%d)", i, c[1], c[2], col, row))
+  end
+
   -- Priority 1: no shift at all
-  if not collides(State.Board, new_cells, State.PieceX, State.PieceY) then
+  local blocked = collides(State.Board, new_cells, State.PieceX, State.PieceY)
+  print(string.format("  kick(0,0): %s", blocked and "BLOCKED" or "OK"))
+  if not blocked then
     State.Rot = new_rot
     State.Cells = new_cells
     State.RotationsThisPiece = State.RotationsThisPiece + 1
@@ -265,17 +279,21 @@ local function try_rotate()
   -- Priority 2: horizontal kicks only (keeps piece at same row)
   for kx = -2, 2 do
     if kx == 0 then goto continue end
-    if not collides(State.Board, new_cells, State.PieceX + kx, State.PieceY) then
+    local kick_blocked = collides(State.Board, new_cells, State.PieceX + kx, State.PieceY)
+    print(string.format("  kick(%d,0): %s", kx, kick_blocked and "BLOCKED" or "OK"))
+    if not kick_blocked then
       State.Rot = new_rot
       State.Cells = new_cells
       State.PieceX = State.PieceX + kx
       State.RotationsThisPiece = State.RotationsThisPiece + 1
+      print(string.format("  SUCCESS: kicked to (%d, %d)", State.PieceX, State.PieceY))
       return true
     end
     ::continue::
   end
 
   -- Rotation blocked (piece too close to edge) — no vertical kicks
+  print("  RESULT: ALL KICKS FAILED")
   return false
 end
 
