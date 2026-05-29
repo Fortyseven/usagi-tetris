@@ -40,6 +40,9 @@ local MOVE_COOLDOWN = 0.10
 local ROTATE_COOLDOWN = 0.08
 local SOFT_COOLDOWN = 0.05
 
+-- Line clear animation
+local LINE_CLEAR_DURATION = 0.4
+
 -- Piece type index -> color
 local PIECE_COLORS = {gfx.COLOR_BLUE, -- 1: I
 gfx.COLOR_YELLOW, -- 2: O
@@ -142,13 +145,12 @@ local function place_piece(board, cells, cx, cy, color)
 end
 
 --------------------------------------------------------------------------------
--- Helper: clear full lines, collapse board, return lines_cleared
+-- Helper: identify full lines (does NOT modify board)
+-- Returns a sorted table of row indices (highest first) that are full
 --------------------------------------------------------------------------------
-local function clear_lines(board)
-    local cleared = 0
-    -- Only check visible rows (hidden rows at top are never cleared)
-    local row = BOARD_H
-    while row >= HIDDEN_ROWS + 1 do
+local function find_full_lines(board)
+    local full_rows = {}
+    for row = BOARD_H, HIDDEN_ROWS + 1, -1 do
         local full = true
         for col = 1, BOARD_W do
             if not board[col][row] then
@@ -157,23 +159,52 @@ local function clear_lines(board)
             end
         end
         if full then
-            cleared = cleared + 1
-            -- Shift everything above down
-            for r = row, HIDDEN_ROWS + 2, -1 do
-                for col = 1, BOARD_W do
-                    board[col][r] = board[col][r - 1] or false
-                end
-            end
-            -- Clear row just below hidden area
-            for col = 1, BOARD_W do
-                board[col][HIDDEN_ROWS + 1] = false
-            end
-            -- Don't decrement: re-check same row for shifted content
-        else
-            row = row - 1
+            table.insert(full_rows, row)
         end
     end
-    return cleared
+    return full_rows
+end
+
+--------------------------------------------------------------------------------
+-- Helper: apply line clears to board (shift rows down)
+-- full_rows is a table of row indices that should be removed
+--------------------------------------------------------------------------------
+local function apply_line_clears(board, full_rows)
+    -- Process from bottom to top (full_rows is already sorted highest first, so reverse)
+    for i = #full_rows, 1, -1 do
+        local row = full_rows[i]
+        -- Shift everything above down by one
+        for r = row, HIDDEN_ROWS + 2, -1 do
+            for col = 1, BOARD_W do
+                board[col][r] = board[col][r - 1] or false
+            end
+        end
+        -- Clear row just below hidden area
+        for col = 1, BOARD_W do
+            board[col][HIDDEN_ROWS + 1] = false
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Helper: compute slide offset for a given board row during animation
+-- Returns how many cells down this row should be shifted visually
+--------------------------------------------------------------------------------
+local function get_slide_offset(row, full_rows)
+    local offset = 0
+    for i = 1, #full_rows do
+        if row < full_rows[i] then
+            offset = offset + 1
+        end
+    end
+    return offset
+end
+
+-- Legacy alias (kept for any external reference)
+local function clear_lines(board)
+    local full_rows = find_full_lines(board)
+    apply_line_clears(board, full_rows)
+    return #full_rows
 end
 
 --------------------------------------------------------------------------------
@@ -263,6 +294,93 @@ local function try_rotate()
 end
 
 --------------------------------------------------------------------------------
+-- Helper: start line clear animation
+-- full_rows: table of board row indices to clear
+-- Returns true if animation started, false if no lines to clear
+--------------------------------------------------------------------------------
+local function start_line_clear_animation(full_rows)
+    if #full_rows == 0 then
+        return false
+    end
+    State.Animating = true
+    State.AnimTimer = LINE_CLEAR_DURATION
+    State.AnimFullRows = full_rows
+    State.AnimClearedCount = #full_rows
+    State.InputBuffer = {}
+    sfx.play("lineclear")
+    effect.flash(0.15, gfx.COLOR_WHITE)
+    effect.screen_shake(0.2, 3)
+    return true
+end
+
+--------------------------------------------------------------------------------
+-- Helper: process buffered input after animation completes
+--------------------------------------------------------------------------------
+local function process_input_buffer()
+    -- Process a limited number of buffered actions to avoid overwhelming
+    local max_actions = 3
+    local processed = 0
+    for i = 1, #State.InputBuffer do
+        if processed >= max_actions then
+            break
+        end
+        local action = State.InputBuffer[i]
+        if action == "left" then
+            if not collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
+                State.PieceX = State.PieceX - 1
+                sfx.play("move")
+                processed = processed + 1
+            end
+        elseif action == "right" then
+            if not collides(State.Board, State.Cells, State.PieceX + 1, State.PieceY) then
+                State.PieceX = State.PieceX + 1
+                sfx.play("move")
+                processed = processed + 1
+            end
+        elseif action == "rotate" then
+            if try_rotate() then
+                sfx.play("rotate")
+                processed = processed + 1
+            end
+        elseif action == "hard_drop" then
+            hard_drop()
+            return -- hard_drop spawns next piece, so stop processing
+        end
+    end
+    State.InputBuffer = {}
+end
+
+--------------------------------------------------------------------------------
+-- Helper: finish line clear animation (apply changes, spawn next piece)
+--------------------------------------------------------------------------------
+local function finish_line_clear()
+    -- Apply line clears to board
+    apply_line_clears(State.Board, State.AnimFullRows)
+
+    -- Update score
+    local cleared = State.AnimClearedCount
+    State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
+    State.Lines = State.Lines + cleared
+    local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
+    if new_level > State.Level then
+        State.Level = new_level
+        sfx.play("levelup")
+    end
+
+    -- Reset animation state
+    State.Animating = false
+    State.AnimTimer = 0
+    State.AnimFullRows = {}
+    State.AnimClearedCount = 0
+
+    -- Spawn next piece
+    spawn_piece()
+
+    -- Process buffered input
+    process_input_buffer()
+end
+
+--------------------------------------------------------------------------------
 -- Helper: hard drop — place piece at ghost position
 --------------------------------------------------------------------------------
 local function hard_drop()
@@ -271,24 +389,27 @@ local function hard_drop()
     place_piece(State.Board, State.Cells, State.PieceX, gy, PIECE_COLORS[State.Type])
 
     -- Check for line clears
-    local cleared = clear_lines(State.Board)
-    if cleared > 0 then
-        State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
-        State.Lines = State.Lines + cleared
-        local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
-        if new_level > State.Level then
-            State.Level = new_level
-            sfx.play("levelup")
+    local full_rows = find_full_lines(State.Board)
+    if #full_rows > 0 then
+        if not start_line_clear_animation(full_rows) then
+            apply_line_clears(State.Board, full_rows)
+            local cleared = #full_rows
+            State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
+            State.Lines = State.Lines + cleared
+            local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
+            if new_level > State.Level then
+                State.Level = new_level
+                sfx.play("levelup")
+            end
         end
-        sfx.play("lineclear")
-        effect.flash(0.15, gfx.COLOR_WHITE)
-        effect.screen_shake(0.2, 3)
     else
         sfx.play("lock")
     end
 
-    -- Spawn next piece
-    spawn_piece()
+    -- Only spawn next piece if not animating
+    if not State.Animating then
+        spawn_piece()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -318,6 +439,15 @@ function _init()
         -- Input tracking
         UpHeld = false,
         RotationsThisPiece = 0,
+
+        -- Line clear animation
+        Animating = false,
+        AnimTimer = 0,
+        AnimFullRows = {}, -- board row indices being cleared
+        AnimClearedCount = 0,
+
+        -- Input buffer (queued actions during animation)
+        InputBuffer = {},
 
         -- Starfield
         Stars = {}
@@ -374,6 +504,30 @@ function _update(dt)
     end
 
     -- === PLAYING STATE ===
+
+    -- If animating a line clear, handle animation timer and buffer input
+    if State.Animating then
+        State.AnimTimer = State.AnimTimer - dt
+
+        -- Buffer input during animation (one action per key press, not held)
+        if input.pressed(input.LEFT) then
+            table.insert(State.InputBuffer, "left")
+        elseif input.pressed(input.RIGHT) then
+            table.insert(State.InputBuffer, "right")
+        elseif input.pressed(input.KEY_UP) or input.pressed(input.KEY_W) then
+            table.insert(State.InputBuffer, "rotate")
+        elseif input.pressed(input.BTN1) then
+            table.insert(State.InputBuffer, "hard_drop")
+        end
+
+        -- Animation complete
+        if State.AnimTimer <= 0 then
+            finish_line_clear()
+        end
+        return
+    end
+
+    -- Normal gameplay
     State.MoveTimer = State.MoveTimer - dt
     State.RotateTimer = State.RotateTimer - dt
     State.SoftTimer = State.SoftTimer - dt
@@ -415,22 +569,25 @@ function _update(dt)
         else
             -- Lock piece at bottom
             place_piece(State.Board, State.Cells, State.PieceX, State.PieceY, PIECE_COLORS[State.Type])
-            local cleared = clear_lines(State.Board)
-            if cleared > 0 then
-                State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
-                State.Lines = State.Lines + cleared
-                local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
-                if new_level > State.Level then
-                    State.Level = new_level
-                    sfx.play("levelup")
+            local full_rows = find_full_lines(State.Board)
+            if #full_rows > 0 then
+                if not start_line_clear_animation(full_rows) then
+                    apply_line_clears(State.Board, full_rows)
+                    local cleared = #full_rows
+                    State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
+                    State.Lines = State.Lines + cleared
+                    local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
+                    if new_level > State.Level then
+                        State.Level = new_level
+                        sfx.play("levelup")
+                    end
                 end
-                sfx.play("lineclear")
-                effect.flash(0.15, gfx.COLOR_WHITE)
-                effect.screen_shake(0.2, 3)
             else
                 sfx.play("lock")
             end
-            spawn_piece()
+            if not State.Animating then
+                spawn_piece()
+            end
             return -- skip gravity for the newly spawned piece
         end
     end
@@ -451,22 +608,25 @@ function _update(dt)
         else
             -- Lock piece
             place_piece(State.Board, State.Cells, State.PieceX, State.PieceY, PIECE_COLORS[State.Type])
-            local cleared = clear_lines(State.Board)
-            if cleared > 0 then
-                State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
-                State.Lines = State.Lines + cleared
-                local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
-                if new_level > State.Level then
-                    State.Level = new_level
-                    sfx.play("levelup")
+            local full_rows = find_full_lines(State.Board)
+            if #full_rows > 0 then
+                if not start_line_clear_animation(full_rows) then
+                    apply_line_clears(State.Board, full_rows)
+                    local cleared = #full_rows
+                    State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
+                    State.Lines = State.Lines + cleared
+                    local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
+                    if new_level > State.Level then
+                        State.Level = new_level
+                        sfx.play("levelup")
+                    end
                 end
-                sfx.play("lineclear")
-                effect.flash(0.15, gfx.COLOR_WHITE)
-                effect.screen_shake(0.2, 3)
             else
                 sfx.play("lock")
             end
-            spawn_piece()
+            if not State.Animating then
+                spawn_piece()
+            end
         end
     end
 end
@@ -533,22 +693,73 @@ function draw_game_board()
     end
 
     -- Locked cells (visible rows only, offset by hidden rows)
-    for col = 1, BOARD_W do
-        for row = HIDDEN_ROWS + 1, BOARD_H do
-            if State.Board[col][row] then
-                local x = BOARD_X + (col - 1) * CELL
-                local y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL
-                gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, State.Board[col][row])
-                -- Highlight edge for 3D effect
-                gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
-                gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
-                gfx.px(x + 2, y + 1, gfx.COLOR_LIGHT_GRAY)
+    -- During animation, apply slide offset and scanline wipe effect
+    if State.Animating then
+        local progress = 1.0 - (State.AnimTimer / LINE_CLEAR_DURATION) -- 0→1 over animation
+
+        -- Draw cells above cleared rows with smooth slide
+        for col = 1, BOARD_W do
+            for row = HIDDEN_ROWS + 1, BOARD_H do
+                -- Skip if this row is being cleared
+                local is_cleared = false
+                for _, cr in ipairs(State.AnimFullRows) do
+                    if row == cr then
+                        is_cleared = true
+                        break
+                    end
+                end
+                if is_cleared then
+                    goto continue_row
+                end
+
+                if State.Board[col][row] then
+                    local slide_offset = get_slide_offset(row, State.AnimFullRows)
+                    local slide_y = progress * slide_offset * CELL
+                    local x = BOARD_X + (col - 1) * CELL
+                    local y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL + slide_y
+                    gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, State.Board[col][row])
+                    -- Highlight edge for 3D effect
+                    gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
+                    gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
+                    gfx.px(x + 2, y + 1, gfx.COLOR_LIGHT_GRAY)
+                end
+                ::continue_row::
+            end
+        end
+
+        -- Draw holographic scanline wipe on cleared rows
+        for _, row in ipairs(State.AnimFullRows) do
+            local screen_y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL
+            -- Scanline beam sweeps from top to bottom of the cleared row
+            local beam_width = progress * BOARD_PX_W
+            if beam_width > 0 then
+                -- Bright holographic beam
+                gfx.rect_fill(BOARD_X, screen_y, beam_width, CELL, gfx.COLOR_WHITE)
+                -- Blue glow trail
+                local trail_width = beam_width * 0.5
+                if trail_width > 0 then
+                    gfx.rect_fill(BOARD_X, screen_y, trail_width, CELL, HOLO)
+                end
+            end
+        end
+    else
+        for col = 1, BOARD_W do
+            for row = HIDDEN_ROWS + 1, BOARD_H do
+                if State.Board[col][row] then
+                    local x = BOARD_X + (col - 1) * CELL
+                    local y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL
+                    gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, State.Board[col][row])
+                    -- Highlight edge for 3D effect
+                    gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
+                    gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
+                    gfx.px(x + 2, y + 1, gfx.COLOR_LIGHT_GRAY)
+                end
             end
         end
     end
 
-    -- Ghost piece (only during gameplay, visible rows only)
-    if State.GameState == "playing" and State.Cells then
+    -- Ghost piece (only during gameplay, not during animation, visible rows only)
+    if State.GameState == "playing" and State.Cells and not State.Animating then
         local gy = ghost_y(State.Board, State.Cells, State.PieceX, State.PieceY)
         if gy ~= State.PieceY then
             for i = 1, #State.Cells do
@@ -563,8 +774,8 @@ function draw_game_board()
         end
     end
 
-    -- Active piece (visible rows only)
-    if State.GameState == "playing" and State.Cells then
+    -- Active piece (visible rows only, not during animation)
+    if State.GameState == "playing" and State.Cells and not State.Animating then
         local color = PIECE_COLORS[State.Type]
         for i = 1, #State.Cells do
             local c = State.Cells[i]
