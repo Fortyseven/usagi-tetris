@@ -187,7 +187,7 @@ Soft drop forces a minimum interval of 0.05s regardless of level.
 | `UP` / `W` | ↑ / W    | D-pad up / stick up       | Rotate (manual edge detection) |
 | `DOWN`     | ↓ / S    | D-pad down / stick down   | Soft drop                      |
 | `BTN1`     | Z / J    | A / Cross                 | Hard drop                      |
-| `SHIFT`    | Shift / C | —                        | Hold piece (swap with hold bin) |
+| `SHIFT`    | Shift / C | B / Square                 | Hold piece (swap with hold bin) |
 
 ### Input Cooldowns
 

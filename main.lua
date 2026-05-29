@@ -423,7 +423,7 @@ function _update(dt)
             table.insert(State.InputBuffer, "rotate")
         elseif input.pressed(input.BTN1) then
             table.insert(State.InputBuffer, "hard_drop")
-        elseif input.key_pressed(input.KEY_C) then
+        elseif input.key_pressed(input.KEY_C) or input.pressed(input.BTN2) then
             table.insert(State.InputBuffer, "hold")
         end
 
@@ -456,7 +456,7 @@ function _update(dt)
     end
 
     -- Rotation (manual edge detection to bypass Usagi input quirks)
-    local up_now = input.key_held(input.KEY_UP) or input.key_held(input.KEY_W)
+    local up_now = input.key_held(input.KEY_UP) or input.key_held(input.KEY_W) or input.held(input.UP) or input.held(input.BTN3)
     local up_edge = up_now and not State.UpHeld
     if up_edge then
         if try_rotate() then
@@ -486,8 +486,8 @@ function _update(dt)
         return -- skip gravity processing this frame
     end
 
-    -- Hold piece (C key)
-    if input.key_pressed(input.KEY_C) then
+    -- Hold piece (C key or BTN2)
+    if input.key_pressed(input.KEY_C) or input.pressed(input.BTN2) then
         hold_piece()
         return -- skip gravity processing this frame
     end
