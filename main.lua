@@ -142,14 +142,13 @@ local function place_piece(board, cells, cx, cy, color)
 end
 
 --------------------------------------------------------------------------------
--- Helper: clear full lines, collapse board, return (lines_cleared, scored_rows)
--- scored_rows is a list of row indices that were cleared (for animation)
+-- Helper: clear full lines, collapse board, return lines_cleared
 --------------------------------------------------------------------------------
 local function clear_lines(board)
     local cleared = 0
-    local scored_rows = {}
     -- Only check visible rows (hidden rows at top are never cleared)
-    for row = BOARD_H, HIDDEN_ROWS + 1, -1 do
+    local row = BOARD_H
+    while row >= HIDDEN_ROWS + 1 do
         local full = true
         for col = 1, BOARD_W do
             if not board[col][row] then
@@ -159,7 +158,6 @@ local function clear_lines(board)
         end
         if full then
             cleared = cleared + 1
-            table.insert(scored_rows, row)
             -- Shift everything above down
             for r = row, HIDDEN_ROWS + 2, -1 do
                 for col = 1, BOARD_W do
@@ -170,9 +168,12 @@ local function clear_lines(board)
             for col = 1, BOARD_W do
                 board[col][HIDDEN_ROWS + 1] = false
             end
+            -- Don't decrement: re-check same row for shifted content
+        else
+            row = row - 1
         end
     end
-    return cleared, scored_rows
+    return cleared
 end
 
 --------------------------------------------------------------------------------
