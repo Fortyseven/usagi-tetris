@@ -6,7 +6,6 @@
 --   board   — grid management, collision, line clears
 --   scoring — score calc, level progression, drop speed
 --   render  — all draw functions
-
 local board = require("board")
 local pieces = require("pieces")
 local scoring = require("scoring")
@@ -61,8 +60,8 @@ local function spawn_piece()
     State.UpHeld = false
     State.RotationsThisPiece = 0 -- track rotations for wall kick logic
 
-    -- Queue a new next piece
-    State.NextType = math.random(1, 7)
+    -- Queue a new next piece (debug: all I pieces)
+    State.NextType = State.DebugAllI and 1 or math.random(1, 7)
 
     -- Check for immediate collision (game over)
     if board.collides(State.Board, State.Cells, State.PieceX, State.PieceY) then
@@ -292,6 +291,9 @@ function _init()
         -- Input buffer (queued actions during animation)
         InputBuffer = {},
 
+        -- Debug
+        DebugAllI = false,
+
         -- Starfield
         Stars = {}
     }
@@ -347,6 +349,15 @@ function _update(dt)
     end
 
     -- === PLAYING STATE ===
+
+    -- Debug shortcuts (dev mode only)
+    if usagi.IS_DEV and input.key_pressed(input.KEY_F1) then
+        print("Debug: Toggle all I pieces")
+        State.DebugAllI = not State.DebugAllI
+        if State.DebugAllI then
+            State.NextType = 1 -- I piece in the next bin
+        end
+    end
 
     -- If animating a line clear, handle animation timer and buffer input
     if State.Animating then
@@ -423,7 +434,8 @@ function _update(dt)
     end
 
     -- Gravity
-    local interval = is_soft_dropping and math.min(scoring.drop_interval(State.Level), 0.05) or scoring.drop_interval(State.Level)
+    local interval = is_soft_dropping and math.min(scoring.drop_interval(State.Level), 0.05) or
+                         scoring.drop_interval(State.Level)
     State.DropTimer = State.DropTimer + dt
     if State.DropTimer >= interval then
         State.DropTimer = State.DropTimer - interval
