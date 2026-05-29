@@ -6,6 +6,7 @@
 --   board   — grid management, collision, line clears
 --   scoring — score calc, level progression, drop speed
 --   render  — all draw functions
+--   hold    — hold bin swap logic
 local board = require("board")
 local pieces = require("pieces")
 local scoring = require("scoring")
@@ -67,6 +68,42 @@ local function spawn_piece()
     if board.collides(State.Board, State.Cells, State.PieceX, State.PieceY) then
         State.GameState = "gameover"
     end
+end
+
+--------------------------------------------------------------------------------
+-- Helper: hold the current piece (swap with hold bin)
+--------------------------------------------------------------------------------
+local function hold_piece()
+    if State.HoldUsedThisTurn then
+        return -- can only hold once per turn
+    end
+
+    local current_type = State.Type
+
+    if State.HoldType ~= nil then
+        -- There was a piece in hold — swap it out as the new current piece
+        State.Type = State.HoldType
+        State.HoldType = current_type
+        State.Rot = 1
+        State.PieceX = 2
+        State.PieceY = board.HIDDEN_ROWS - 1
+        State.Cells = pieces.get_cells(State.Type, State.Rot)
+    else
+        -- Hold bin was empty — store current piece and spawn next
+        State.HoldType = current_type
+        spawn_piece()
+    end
+
+    -- Reset timers for the new active piece
+    State.RotateTimer = 0
+    State.MoveTimer = 0
+    State.SoftTimer = 0
+    State.DropTimer = -0.4 -- grace period
+    State.UpHeld = false
+    State.RotationsThisPiece = 0
+    State.HoldUsedThisTurn = true
+
+    sfx.play("move") -- reuse move sound for hold action
 end
 
 --------------------------------------------------------------------------------
@@ -157,6 +194,9 @@ local function process_input_buffer()
             -- Forward to hard_drop (defined below)
             hard_drop()
             return -- hard_drop spawns next piece, so stop processing
+        elseif action == "hold" then
+            hold_piece()
+            return -- hold_piece spawns next piece, so stop processing
         end
     end
     State.InputBuffer = {}
@@ -187,6 +227,7 @@ local function finish_line_clear()
     State.AnimClearedCount = 0
 
     -- Spawn next piece
+    State.HoldUsedThisTurn = false -- reset for next turn
     spawn_piece()
 
     -- Process buffered input
@@ -221,6 +262,7 @@ local function hard_drop()
 
     -- Only spawn next piece if not animating
     if not State.Animating then
+        State.HoldUsedThisTurn = false -- reset for next turn
         spawn_piece()
     end
 end
@@ -248,6 +290,7 @@ local function lock_piece()
         sfx.play("lock")
     end
     if not State.Animating then
+        State.HoldUsedThisTurn = false -- reset for next turn
         spawn_piece()
     end
     return true
@@ -294,6 +337,10 @@ function _init()
         -- Debug
         DebugAllI = false,
 
+        -- Hold bin
+        HoldType = nil, -- piece type currently in hold (nil = empty)
+        HoldUsedThisTurn = false, -- can only hold once per turn
+
         -- Starfield
         Stars = {}
     }
@@ -330,6 +377,8 @@ function _update(dt)
             State.MoveTimer = 0
             State.RotateTimer = 0
             State.SoftTimer = 0
+            State.HoldType = nil
+            State.HoldUsedThisTurn = false
             spawn_piece()
         end
         return
@@ -343,6 +392,8 @@ function _update(dt)
             State.Level = 1
             State.Lines = 0
             State.DropTimer = 0
+            State.HoldType = nil
+            State.HoldUsedThisTurn = false
             spawn_piece()
         end
         return
@@ -372,6 +423,8 @@ function _update(dt)
             table.insert(State.InputBuffer, "rotate")
         elseif input.pressed(input.BTN1) then
             table.insert(State.InputBuffer, "hard_drop")
+        elseif input.key_pressed(input.KEY_C) then
+            table.insert(State.InputBuffer, "hold")
         end
 
         -- Animation complete
@@ -430,6 +483,12 @@ function _update(dt)
     -- Hard drop
     if input.pressed(input.BTN1) then
         hard_drop()
+        return -- skip gravity processing this frame
+    end
+
+    -- Hold piece (C key)
+    if input.key_pressed(input.KEY_C) then
+        hold_piece()
         return -- skip gravity processing this frame
     end
 

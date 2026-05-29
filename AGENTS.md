@@ -59,6 +59,8 @@ All cross-frame game state lives in the `State` global, initialized in `_init()`
 | `SoftTimer`          | number  | Soft drop cooldown                                             |
 | `UpHeld`             | boolean | Manual edge-detection for UP key rotation                      |
 | `RotationsThisPiece` | number  | Rotation count for current piece (wall kick tracking)          |
+| `HoldType`           | number  | Piece type currently in hold bin (1–7) or `nil` (empty)        |
+| `HoldUsedThisTurn`   | boolean | Whether hold has been used this turn (prevents spam)           |
 | `Stars`              | table   | Starfield data `{{x, y, brightness, twinkle_speed}, ...}`      |
 
 ---
@@ -128,6 +130,16 @@ Each rotation state defines cells as `{{x, y}, ...}` offsets relative to the pie
 
 `ghost_y(board, cells, cx, cy)` finds the lowest non-colliding Y by stepping down one row at a time. Rendered as a blue outline on visible rows only.
 
+### Hold Piece
+
+`hold_piece()` swaps the current piece with the piece in the hold bin:
+
+- **Empty hold bin**: current piece is stored in hold, next piece spawns immediately
+- **Occupied hold bin**: current piece and hold piece swap places, held piece resets to rotation 1, center position
+- **Once per turn**: `HoldUsedThisTurn` flag prevents spam; resets when a piece locks
+
+Rendered in the right panel below NEXT, using the same 6px cell preview style. Shows `---` placeholder when empty.
+
 ---
 
 ## Scoring & Progression
@@ -175,6 +187,7 @@ Soft drop forces a minimum interval of 0.05s regardless of level.
 | `UP` / `W` | ↑ / W    | D-pad up / stick up       | Rotate (manual edge detection) |
 | `DOWN`     | ↓ / S    | D-pad down / stick down   | Soft drop                      |
 | `BTN1`     | Z / J    | A / Cross                 | Hard drop                      |
+| `SHIFT`    | Shift / C | —                        | Hold piece (swap with hold bin) |
 
 ### Input Cooldowns
 
@@ -238,10 +251,11 @@ Sci-fi holographic station terminal. Deep space background with twinkling starfi
 Positioned at `PANEL_X` (board right edge + 10px). Contains:
 
 - **NEXT** piece preview (6px cells, centered)
+- **HOLD** piece preview (6px cells, centered, `---` placeholder when empty)
 - **SCORE** (6-digit zero-padded)
 - **LEVEL**
 - **LINES**
-- **CONTROLS** reference
+- **CONTROLS** reference (includes SHIFT HOLD)
 
 ---
 
@@ -303,9 +317,10 @@ Currently single-file (`main.lua`). For growth, split into modules via `require`
 | `spawn_piece()`           | Promote next piece, reset timers, check game over             |
 | `try_rotate()`            | Attempt rotation with wall kick priority                      |
 | `hard_drop()`             | Drop to ghost position, lock, score, spawn next               |
+| `hold_piece()`            | Swap current piece with hold bin, or store if empty           |
 | `new_board()`             | Create empty 10×22 board                                      |
 | `draw_game_board()`       | Render board: grid, locked cells, ghost, active piece, border |
-| `draw_right_panel()`      | Render next piece, score, level, lines, controls              |
+| `draw_right_panel()`      | Render next piece, hold piece, score, level, lines, controls  |
 | `draw_title_screen()`     | Render title, subtitle, piece preview, start prompt           |
 | `draw_game_over_screen()` | Render game over overlay with stats                           |
 

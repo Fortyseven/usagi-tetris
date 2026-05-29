@@ -237,28 +237,68 @@ function M.draw_right_panel()
         gfx.rect_fill(cx, cy, 5, 5, preview_color)
     end
 
+    -- "HOLD" label
+    local hold_y = y + 40
+    gfx.text("HOLD", x + 4, hold_y, HOLO)
+
+    -- Hold piece preview (small grid, same style as NEXT)
+    if State.HoldType then
+        local hold_cells = pieces.get_cells(State.HoldType, 1)
+        local hold_color = pieces.get_piece_color(State.HoldType)
+        local h_min_x, h_max_x, h_min_y, h_max_y = 0, 0, 0, 0
+        for i = 1, #hold_cells do
+            local c = hold_cells[i]
+            if c[1] < h_min_x then
+                h_min_x = c[1]
+            end
+            if c[1] > h_max_x then
+                h_max_x = c[1]
+            end
+            if c[2] < h_min_y then
+                h_min_y = c[2]
+            end
+            if c[2] > h_max_y then
+                h_max_y = c[2]
+            end
+        end
+        local hpw = (h_max_x - h_min_x + 1) * 6
+        local hpx_offset = x + 4 + (80 - hpw) / 2
+        local hpy_offset = hold_y + 10
+
+        for i = 1, #hold_cells do
+            local c = hold_cells[i]
+            local hcx = hpx_offset + (c[1] - h_min_x) * 6
+            local hcy = hpy_offset + (c[2] - h_min_y) * 6
+            gfx.rect_fill(hcx, hcy, 5, 5, hold_color)
+        end
+    else
+        -- Empty hold bin — dim placeholder
+        gfx.text("---", x + 4 + 30, hold_y + 14, gfx.COLOR_DARK_GRAY)
+    end
+
     -- SCORE
-    local score_y = y + 50
+    local score_y = y + 80
     gfx.text("SCORE", x + 4, score_y, gfx.COLOR_LIGHT_GRAY)
     gfx.text(string.format("%06d", State.Score), x + 4, score_y + 10, gfx.COLOR_WHITE)
 
     -- LEVEL
-    local level_y = y + 80
+    local level_y = y + 110
     gfx.text("LEVEL", x + 4, level_y, gfx.COLOR_LIGHT_GRAY)
     gfx.text(tostring(State.Level), x + 4, level_y + 10, gfx.COLOR_YELLOW)
 
     -- LINES
-    local lines_y = y + 110
+    local lines_y = y + 140
     gfx.text("LINES", x + 4, lines_y, gfx.COLOR_LIGHT_GRAY)
     gfx.text(tostring(State.Lines), x + 4, lines_y + 10, gfx.COLOR_GREEN)
 
     -- Controls reference
-    local ctrl_y = y + 140
+    local ctrl_y = y + 170
     gfx.text("CONTROLS", x + 4, ctrl_y, HOLO)
     gfx.text("< > MOVE", x + 4, ctrl_y + 10, gfx.COLOR_DARK_GRAY)
     gfx.text("^ ROTATE", x + 4, ctrl_y + 20, gfx.COLOR_DARK_GRAY)
     gfx.text("v SOFT", x + 4, ctrl_y + 30, gfx.COLOR_DARK_GRAY)
     gfx.text("Z DROP", x + 4, ctrl_y + 40, gfx.COLOR_DARK_GRAY)
+    gfx.text("SHIFT HOLD", x + 4, ctrl_y + 50, gfx.COLOR_DARK_GRAY)
 end
 
 --------------------------------------------------------------------------------
