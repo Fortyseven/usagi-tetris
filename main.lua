@@ -394,15 +394,15 @@ function _update(dt)
   State.MoveTimer = State.MoveTimer - dt
   State.RotateTimer = State.RotateTimer - dt
   State.SoftTimer = State.SoftTimer - dt
-  -- Horizontal movement
-  if input.pressed(input.LEFT) and State.MoveTimer <= 0 then
+  -- Horizontal movement (held, gated by cooldown for repeat)
+  if input.held(input.LEFT) and State.MoveTimer <= 0 then
     if not collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
       State.PieceX = State.PieceX - 1
       State.MoveTimer = MOVE_COOLDOWN
       sfx.play("move")
     end
   end
-  if input.pressed(input.RIGHT) and State.MoveTimer <= 0 then
+  if input.held(input.RIGHT) and State.MoveTimer <= 0 then
     if not collides(State.Board, State.Cells, State.PieceX + 1, State.PieceY) then
       State.PieceX = State.PieceX + 1
       State.MoveTimer = MOVE_COOLDOWN
