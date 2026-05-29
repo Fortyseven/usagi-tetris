@@ -1,5 +1,17 @@
 -- TETRIS // ORBITAL STATION BLOCK ASSEMBLY
 -- Sci-fi themed Tetris clone for Usagi Engine
+--
+-- Modules:
+--   pieces  — tetromino definitions, colors
+--   board   — grid management, collision, line clears
+--   scoring — score calc, level progression, drop speed
+--   render  — all draw functions
+
+local board = require("board")
+local pieces = require("pieces")
+local scoring = require("scoring")
+local render = require("render")
+
 --------------------------------------------------------------------------------
 -- _config
 --------------------------------------------------------------------------------
@@ -13,27 +25,11 @@ end
 --------------------------------------------------------------------------------
 -- Constants (file-scope locals — safe to rebind on live reload)
 --------------------------------------------------------------------------------
-local BOARD_W = 10
-local BOARD_H = 22 -- 20 visible + 2 hidden rows at top (for rotation room)
-local HIDDEN_ROWS = 2
-local VISIBLE_H = BOARD_H - HIDDEN_ROWS -- 20
 local CELL = 8
 local BOARD_X = 6
 local BOARD_Y = 8
-local BOARD_PX_W = BOARD_W * CELL
-local BOARD_PX_H = VISIBLE_H * CELL -- only visible portion
-
--- Right panel layout
-local PANEL_X = BOARD_X + BOARD_PX_W + 10
-
--- Scoring: lines cleared -> base points
-local SCORE_TABLE = {0, 40, 100, 300, 1200}
-
--- Lines needed per level
-local LINES_PER_LEVEL = 10
-
--- Max level (caps speed)
-local MAX_LEVEL = 15
+local BOARD_PX_W = board.BOARD_W * CELL
+local BOARD_PX_H = board.VISIBLE_H * CELL
 
 -- Input cooldowns (seconds)
 local MOVE_COOLDOWN = 0.10
@@ -43,192 +39,8 @@ local SOFT_COOLDOWN = 0.05
 -- Line clear animation
 local LINE_CLEAR_DURATION = 0.4
 
--- Piece type index -> color
-local PIECE_COLORS = {gfx.COLOR_BLUE, -- 1: I
-gfx.COLOR_YELLOW, -- 2: O
-gfx.COLOR_DARK_PURPLE, -- 3: T
-gfx.COLOR_GREEN, -- 4: S
-gfx.COLOR_RED, -- 5: Z
-gfx.COLOR_INDIGO, -- 6: J
-gfx.COLOR_ORANGE -- 7: L
-}
-
--- Holographic accent color (bright blue for sci-fi feel)
+-- Holographic accent color
 local HOLO = gfx.COLOR_BLUE
-
--- Tetromino shapes: all 4 rotation states pre-defined per piece type.
--- SHAPES[type][rot] returns cells as {{x,y}, ...} where rot is 1..4.
--- Each state is a distinct shape — no rotation math at runtime.
-local SHAPES = { -- I piece
-{{{-1, 0}, {0, 0}, {1, 0}, {2, 0}}, -- rot 1: horizontal
-{{0, -1}, {0, 0}, {0, 1}, {0, 2}}, -- rot 2: vertical
-{{-1, 0}, {0, 0}, {1, 0}, {2, 0}}, -- rot 3: horizontal (flipped)
-{{0, -1}, {0, 0}, {0, 1}, {0, 2}} -- rot 4: vertical
-}, -- O piece (all rotations identical)
-{{{0, 0}, {1, 0}, {0, 1}, {1, 1}}, {{0, 0}, {1, 0}, {0, 1}, {1, 1}}, {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
- {{0, 0}, {1, 0}, {0, 1}, {1, 1}}}, -- T piece
-{{{-1, 0}, {0, 0}, {1, 0}, {0, -1}}, -- rot 1: T upright
-{{0, -1}, {0, 0}, {0, 1}, {-1, 0}}, -- rot 2: pointing left
-{{-1, 0}, {0, 0}, {1, 0}, {0, 1}}, -- rot 3: T inverted
-{{0, -1}, {0, 0}, {0, 1}, {1, 0}} -- rot 4: pointing right
-}, -- S piece
-{{{0, 0}, {1, 0}, {-1, 1}, {0, 1}}, -- rot 1: horizontal
-{{-1, -1}, {-1, 0}, {0, 0}, {0, 1}}, -- rot 2: vertical
-{{0, 0}, {1, 0}, {-1, 1}, {0, 1}}, -- rot 3: horizontal
-{{-1, -1}, {-1, 0}, {0, 0}, {0, 1}} -- rot 4: vertical
-}, -- Z piece
-{{{-1, 0}, {0, 0}, {0, 1}, {1, 1}}, -- rot 1: horizontal
-{{0, -1}, {0, 0}, {-1, 0}, {-1, 1}}, -- rot 2: vertical
-{{-1, 0}, {0, 0}, {0, 1}, {1, 1}}, -- rot 3: horizontal
-{{0, -1}, {0, 0}, {-1, 0}, {-1, 1}} -- rot 4: vertical
-}, -- J piece
-{{{-1, 0}, {0, 0}, {1, 0}, {-1, -1}}, -- rot 1: J upright
-{{0, -1}, {0, 0}, {0, 1}, {-1, 1}}, -- rot 2: pointing left
-{{-1, 0}, {0, 0}, {1, 0}, {1, 1}}, -- rot 3: J inverted
-{{0, -1}, {0, 0}, {0, 1}, {1, -1}} -- rot 4: pointing right
-}, -- L piece
-{{{-1, 0}, {0, 0}, {1, 0}, {1, -1}}, -- rot 1: L upright
-{{0, -1}, {0, 0}, {0, 1}, {-1, -1}}, -- rot 2: pointing left
-{{-1, 0}, {0, 0}, {1, 0}, {-1, 1}}, -- rot 3: L inverted
-{{0, -1}, {0, 0}, {0, 1}, {1, 1}} -- rot 4: pointing right
-}}
-
---------------------------------------------------------------------------------
--- Helper: get cells for a piece type and rotation level (1-indexed)
---------------------------------------------------------------------------------
-local function get_cells(type, rot)
-    return SHAPES[type][rot]
-end
-
---------------------------------------------------------------------------------
--- Helper: check if piece cells collide with board boundaries or locked cells
--- board is 1-indexed: board[col][row], col 1..BOARD_W, row 1..BOARD_H
---------------------------------------------------------------------------------
-local function collides(board, cells, cx, cy)
-    for i = 1, #cells do
-        local c = cells[i]
-        local col = cx + c[1] + 1 -- convert to 1-indexed
-        local row = cy + c[2] + 1
-        if col < 1 or col > BOARD_W or row > BOARD_H then
-            return true
-        end
-        if row >= 1 and board[col] and board[col][row] then
-            return true
-        end
-    end
-    return false
-end
-
---------------------------------------------------------------------------------
--- Helper: find ghost piece Y (lowest non-colliding position)
---------------------------------------------------------------------------------
-local function ghost_y(board, cells, cx, cy)
-    local gy = cy
-    while not collides(board, cells, cx, gy + 1) do
-        gy = gy + 1
-    end
-    return gy
-end
-
---------------------------------------------------------------------------------
--- Helper: place piece onto board (bake cells into board with color)
---------------------------------------------------------------------------------
-local function place_piece(board, cells, cx, cy, color)
-    for i = 1, #cells do
-        local c = cells[i]
-        local col = cx + c[1] + 1
-        local row = cy + c[2] + 1
-        if row >= 1 and row <= BOARD_H and col >= 1 and col <= BOARD_W then
-            board[col][row] = color
-        end
-    end
-end
-
---------------------------------------------------------------------------------
--- Helper: identify full lines (does NOT modify board)
--- Returns a sorted table of row indices (highest first) that are full
---------------------------------------------------------------------------------
-local function find_full_lines(board)
-    local full_rows = {}
-    for row = BOARD_H, HIDDEN_ROWS + 1, -1 do
-        local full = true
-        for col = 1, BOARD_W do
-            if not board[col][row] then
-                full = false
-                break
-            end
-        end
-        if full then
-            table.insert(full_rows, row)
-        end
-    end
-    return full_rows
-end
-
---------------------------------------------------------------------------------
--- Helper: apply line clears to board (shift rows down)
--- full_rows is a table of row indices that should be removed
---------------------------------------------------------------------------------
-local function apply_line_clears(board, full_rows)
-    -- Process from bottom to top (full_rows is already sorted highest first, so reverse)
-    for i = #full_rows, 1, -1 do
-        local row = full_rows[i]
-        -- Shift everything above down by one
-        for r = row, HIDDEN_ROWS + 2, -1 do
-            for col = 1, BOARD_W do
-                board[col][r] = board[col][r - 1] or false
-            end
-        end
-        -- Clear row just below hidden area
-        for col = 1, BOARD_W do
-            board[col][HIDDEN_ROWS + 1] = false
-        end
-    end
-end
-
---------------------------------------------------------------------------------
--- Helper: compute slide offset for a given board row during animation
--- Returns how many cells down this row should be shifted visually
---------------------------------------------------------------------------------
-local function get_slide_offset(row, full_rows)
-    local offset = 0
-    for i = 1, #full_rows do
-        if row < full_rows[i] then
-            offset = offset + 1
-        end
-    end
-    return offset
-end
-
--- Legacy alias (kept for any external reference)
-local function clear_lines(board)
-    local full_rows = find_full_lines(board)
-    apply_line_clears(board, full_rows)
-    return #full_rows
-end
-
---------------------------------------------------------------------------------
--- Helper: drop interval in seconds based on level
--- Exponential curve: fast at high levels
---------------------------------------------------------------------------------
-local function drop_interval(level)
-    local t = 0.8 - (util.clamp(level, 1, MAX_LEVEL) - 1) * 0.05
-    return math.max(t, 0.05)
-end
-
---------------------------------------------------------------------------------
--- Helper: create an empty board (1-indexed: board[col][row])
---------------------------------------------------------------------------------
-local function new_board()
-    local board = {}
-    for col = 1, BOARD_W do
-        board[col] = {}
-        for row = 1, BOARD_H do
-            board[col][row] = false
-        end
-    end
-    return board
-end
 
 --------------------------------------------------------------------------------
 -- Helper: spawn a new piece from the next piece queue
@@ -238,8 +50,8 @@ local function spawn_piece()
     State.Type = State.NextType
     State.Rot = 1 -- 1-indexed rotation state
     State.PieceX = 2 -- center-ish
-    State.PieceY = HIDDEN_ROWS - 1 -- spawn in hidden area (row 1 in 1-indexed)
-    State.Cells = get_cells(State.Type, State.Rot)
+    State.PieceY = board.HIDDEN_ROWS - 1 -- spawn in hidden area (row 1 in 1-indexed)
+    State.Cells = pieces.get_cells(State.Type, State.Rot)
 
     -- Reset all timers so the new piece is immediately controllable
     State.RotateTimer = 0
@@ -253,10 +65,9 @@ local function spawn_piece()
     State.NextType = math.random(1, 7)
 
     -- Check for immediate collision (game over)
-    if collides(State.Board, State.Cells, State.PieceX, State.PieceY) then
+    if board.collides(State.Board, State.Cells, State.PieceX, State.PieceY) then
         State.GameState = "gameover"
     end
-
 end
 
 --------------------------------------------------------------------------------
@@ -264,10 +75,10 @@ end
 --------------------------------------------------------------------------------
 local function try_rotate()
     local new_rot = State.Rot == 1 and 4 or State.Rot - 1 -- 1→4→3→2→1
-    local new_cells = get_cells(State.Type, new_rot)
+    local new_cells = pieces.get_cells(State.Type, new_rot)
 
     -- Priority 1: no shift at all
-    if not collides(State.Board, new_cells, State.PieceX, State.PieceY) then
+    if not board.collides(State.Board, new_cells, State.PieceX, State.PieceY) then
         State.Rot = new_rot
         State.Cells = new_cells
         State.RotationsThisPiece = State.RotationsThisPiece + 1
@@ -279,7 +90,7 @@ local function try_rotate()
         if kx == 0 then
             goto continue
         end
-        if not collides(State.Board, new_cells, State.PieceX + kx, State.PieceY) then
+        if not board.collides(State.Board, new_cells, State.PieceX + kx, State.PieceY) then
             State.Rot = new_rot
             State.Cells = new_cells
             State.PieceX = State.PieceX + kx
@@ -304,6 +115,7 @@ local function start_line_clear_animation(full_rows)
     end
     State.Animating = true
     State.AnimTimer = LINE_CLEAR_DURATION
+    State.AnimDuration = LINE_CLEAR_DURATION
     State.AnimFullRows = full_rows
     State.AnimClearedCount = #full_rows
     State.InputBuffer = {}
@@ -326,13 +138,13 @@ local function process_input_buffer()
         end
         local action = State.InputBuffer[i]
         if action == "left" then
-            if not collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
+            if not board.collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
                 State.PieceX = State.PieceX - 1
                 sfx.play("move")
                 processed = processed + 1
             end
         elseif action == "right" then
-            if not collides(State.Board, State.Cells, State.PieceX + 1, State.PieceY) then
+            if not board.collides(State.Board, State.Cells, State.PieceX + 1, State.PieceY) then
                 State.PieceX = State.PieceX + 1
                 sfx.play("move")
                 processed = processed + 1
@@ -343,6 +155,7 @@ local function process_input_buffer()
                 processed = processed + 1
             end
         elseif action == "hard_drop" then
+            -- Forward to hard_drop (defined below)
             hard_drop()
             return -- hard_drop spawns next piece, so stop processing
         end
@@ -355,13 +168,13 @@ end
 --------------------------------------------------------------------------------
 local function finish_line_clear()
     -- Apply line clears to board
-    apply_line_clears(State.Board, State.AnimFullRows)
+    board.apply_line_clears(State.Board, State.AnimFullRows)
 
     -- Update score
     local cleared = State.AnimClearedCount
-    State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
+    State.Score = State.Score + scoring.calculate_score(cleared, State.Level)
     State.Lines = State.Lines + cleared
-    local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
+    local new_level = scoring.calculate_new_level(State.Lines)
     if new_level > State.Level then
         State.Level = new_level
         sfx.play("levelup")
@@ -370,6 +183,7 @@ local function finish_line_clear()
     -- Reset animation state
     State.Animating = false
     State.AnimTimer = 0
+    State.AnimDuration = 0
     State.AnimFullRows = {}
     State.AnimClearedCount = 0
 
@@ -384,19 +198,19 @@ end
 -- Helper: hard drop — place piece at ghost position
 --------------------------------------------------------------------------------
 local function hard_drop()
-    local gy = ghost_y(State.Board, State.Cells, State.PieceX, State.PieceY)
+    local gy = board.ghost_y(State.Board, State.Cells, State.PieceX, State.PieceY)
     -- Place and lock
-    place_piece(State.Board, State.Cells, State.PieceX, gy, PIECE_COLORS[State.Type])
+    board.place_piece(State.Board, State.Cells, State.PieceX, gy, pieces.get_piece_color(State.Type))
 
     -- Check for line clears
-    local full_rows = find_full_lines(State.Board)
+    local full_rows = board.find_full_lines(State.Board)
     if #full_rows > 0 then
         if not start_line_clear_animation(full_rows) then
-            apply_line_clears(State.Board, full_rows)
+            board.apply_line_clears(State.Board, full_rows)
             local cleared = #full_rows
-            State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
+            State.Score = State.Score + scoring.calculate_score(cleared, State.Level)
             State.Lines = State.Lines + cleared
-            local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
+            local new_level = scoring.calculate_new_level(State.Lines)
             if new_level > State.Level then
                 State.Level = new_level
                 sfx.play("levelup")
@@ -413,13 +227,41 @@ local function hard_drop()
 end
 
 --------------------------------------------------------------------------------
+-- Helper: lock piece at current position (shared by soft drop & gravity)
+-- Returns true if a new piece was spawned (caller should skip gravity)
+--------------------------------------------------------------------------------
+local function lock_piece()
+    board.place_piece(State.Board, State.Cells, State.PieceX, State.PieceY, pieces.get_piece_color(State.Type))
+    local full_rows = board.find_full_lines(State.Board)
+    if #full_rows > 0 then
+        if not start_line_clear_animation(full_rows) then
+            board.apply_line_clears(State.Board, full_rows)
+            local cleared = #full_rows
+            State.Score = State.Score + scoring.calculate_score(cleared, State.Level)
+            State.Lines = State.Lines + cleared
+            local new_level = scoring.calculate_new_level(State.Lines)
+            if new_level > State.Level then
+                State.Level = new_level
+                sfx.play("levelup")
+            end
+        end
+    else
+        sfx.play("lock")
+    end
+    if not State.Animating then
+        spawn_piece()
+    end
+    return true
+end
+
+--------------------------------------------------------------------------------
 -- _init: called once at startup and on F5 reset
 --------------------------------------------------------------------------------
 function _init()
     State = {
         -- Game state
         GameState = "title", -- "title" | "playing" | "gameover"
-        Board = new_board(),
+        Board = board.new_board(),
         Type = 1, -- current piece type (1-7)
         Rot = 1, -- current rotation (1-4, 1-indexed)
         PieceX = 2, -- current piece X (0-indexed, relative)
@@ -443,6 +285,7 @@ function _init()
         -- Line clear animation
         Animating = false,
         AnimTimer = 0,
+        AnimDuration = 0,
         AnimFullRows = {}, -- board row indices being cleared
         AnimClearedCount = 0,
 
@@ -477,7 +320,7 @@ function _update(dt)
     if State.GameState == "title" then
         if input.pressed(input.BTN1) then
             State.GameState = "playing"
-            State.Board = new_board()
+            State.Board = board.new_board()
             State.Score = 0
             State.Level = 1
             State.Lines = 0
@@ -493,7 +336,7 @@ function _update(dt)
     if State.GameState == "gameover" then
         if input.pressed(input.BTN1) then
             State.GameState = "playing"
-            State.Board = new_board()
+            State.Board = board.new_board()
             State.Score = 0
             State.Level = 1
             State.Lines = 0
@@ -531,16 +374,17 @@ function _update(dt)
     State.MoveTimer = State.MoveTimer - dt
     State.RotateTimer = State.RotateTimer - dt
     State.SoftTimer = State.SoftTimer - dt
+
     -- Horizontal movement (held, gated by cooldown for repeat)
     if input.held(input.LEFT) and State.MoveTimer <= 0 then
-        if not collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
+        if not board.collides(State.Board, State.Cells, State.PieceX - 1, State.PieceY) then
             State.PieceX = State.PieceX - 1
             State.MoveTimer = MOVE_COOLDOWN
             sfx.play("move")
         end
     end
     if input.held(input.RIGHT) and State.MoveTimer <= 0 then
-        if not collides(State.Board, State.Cells, State.PieceX + 1, State.PieceY) then
+        if not board.collides(State.Board, State.Cells, State.PieceX + 1, State.PieceY) then
             State.PieceX = State.PieceX + 1
             State.MoveTimer = MOVE_COOLDOWN
             sfx.play("move")
@@ -560,34 +404,14 @@ function _update(dt)
     -- Soft drop
     local is_soft_dropping = input.held(input.DOWN)
     if is_soft_dropping and State.SoftTimer <= 0 then
-        if not collides(State.Board, State.Cells, State.PieceX, State.PieceY + 1) then
+        if not board.collides(State.Board, State.Cells, State.PieceX, State.PieceY + 1) then
             State.PieceY = State.PieceY + 1
             State.Score = State.Score + 1
             State.SoftTimer = SOFT_COOLDOWN
             State.DropTimer = 0 -- reset gravity timer on soft drop
             sfx.play("drop")
         else
-            -- Lock piece at bottom
-            place_piece(State.Board, State.Cells, State.PieceX, State.PieceY, PIECE_COLORS[State.Type])
-            local full_rows = find_full_lines(State.Board)
-            if #full_rows > 0 then
-                if not start_line_clear_animation(full_rows) then
-                    apply_line_clears(State.Board, full_rows)
-                    local cleared = #full_rows
-                    State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
-                    State.Lines = State.Lines + cleared
-                    local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
-                    if new_level > State.Level then
-                        State.Level = new_level
-                        sfx.play("levelup")
-                    end
-                end
-            else
-                sfx.play("lock")
-            end
-            if not State.Animating then
-                spawn_piece()
-            end
+            lock_piece()
             return -- skip gravity for the newly spawned piece
         end
     end
@@ -599,34 +423,14 @@ function _update(dt)
     end
 
     -- Gravity
-    local interval = is_soft_dropping and math.min(drop_interval(State.Level), 0.05) or drop_interval(State.Level)
+    local interval = is_soft_dropping and math.min(scoring.drop_interval(State.Level), 0.05) or scoring.drop_interval(State.Level)
     State.DropTimer = State.DropTimer + dt
     if State.DropTimer >= interval then
         State.DropTimer = State.DropTimer - interval
-        if not collides(State.Board, State.Cells, State.PieceX, State.PieceY + 1) then
+        if not board.collides(State.Board, State.Cells, State.PieceX, State.PieceY + 1) then
             State.PieceY = State.PieceY + 1
         else
-            -- Lock piece
-            place_piece(State.Board, State.Cells, State.PieceX, State.PieceY, PIECE_COLORS[State.Type])
-            local full_rows = find_full_lines(State.Board)
-            if #full_rows > 0 then
-                if not start_line_clear_animation(full_rows) then
-                    apply_line_clears(State.Board, full_rows)
-                    local cleared = #full_rows
-                    State.Score = State.Score + SCORE_TABLE[cleared] * State.Level
-                    State.Lines = State.Lines + cleared
-                    local new_level = math.floor(State.Lines / LINES_PER_LEVEL) + 1
-                    if new_level > State.Level then
-                        State.Level = new_level
-                        sfx.play("levelup")
-                    end
-                end
-            else
-                sfx.play("lock")
-            end
-            if not State.Animating then
-                spawn_piece()
-            end
+            lock_piece()
         end
     end
 end
@@ -635,331 +439,15 @@ end
 -- _draw: rendering
 --------------------------------------------------------------------------------
 function _draw(dt)
-    -- Background: deep space dark blue
-    gfx.clear(gfx.COLOR_DARK_BLUE)
-
-    -- Starfield with twinkling
-    for i = 1, #State.Stars do
-        local star = State.Stars[i]
-        local twinkle = 0.3 + 0.7 * (0.5 + 0.5 * math.sin(usagi.elapsed * star.twinkle_speed * 2 * math.pi))
-        local alpha = star.brightness * twinkle
-        if alpha > 0.5 then
-            gfx.px(star.x, star.y, gfx.COLOR_WHITE)
-        elseif alpha > 0.25 then
-            gfx.px(star.x, star.y, gfx.COLOR_LIGHT_GRAY)
-        else
-            gfx.px(star.x, star.y, gfx.COLOR_DARK_GRAY)
-        end
-    end
-
-    -- Scanline overlay (subtle — every other row, very dim)
-    for y = 0, usagi.GAME_H - 1, 2 do
-        for x = 0, usagi.GAME_W - 1 do
-            -- Only draw scanlines in non-board areas for subtlety
-            local in_board = x >= BOARD_X and x < BOARD_X + BOARD_PX_W and y >= BOARD_Y and y < BOARD_Y + BOARD_PX_H
-            if not in_board then
-                gfx.px(x, y, gfx.COLOR_DARK_BLUE)
-            end
-        end
-    end
+    render.draw_background()
 
     if State.GameState == "title" then
-        draw_title_screen()
+        render.draw_title_screen()
     elseif State.GameState == "gameover" then
-        draw_game_board()
-        draw_game_over_screen()
+        render.draw_game_board()
+        render.draw_game_over_screen()
     else
-        draw_game_board()
-        draw_right_panel()
-    end
-
-end
-
---------------------------------------------------------------------------------
--- Draw: game board (holographic style)
---------------------------------------------------------------------------------
-function draw_game_board()
-    -- Board background (slightly lighter than space)
-    gfx.rect_fill(BOARD_X - 1, BOARD_Y - 1, BOARD_PX_W + 2, BOARD_PX_H + 2, gfx.COLOR_BLACK)
-
-    -- Holographic grid lines (dim) — visible rows only
-    for col = 0, BOARD_W do
-        local x = BOARD_X + col * CELL
-        gfx.line(x, BOARD_Y, x, BOARD_Y + BOARD_PX_H, gfx.COLOR_DARK_GRAY)
-    end
-    for row = 0, VISIBLE_H do
-        local y = BOARD_Y + row * CELL
-        gfx.line(BOARD_X, y, BOARD_X + BOARD_PX_W, y, gfx.COLOR_DARK_GRAY)
-    end
-
-    -- Locked cells (visible rows only, offset by hidden rows)
-    -- During animation, apply slide offset and scanline wipe effect
-    if State.Animating then
-        local progress = 1.0 - (State.AnimTimer / LINE_CLEAR_DURATION) -- 0→1 over animation
-
-        -- Draw cells above cleared rows with smooth slide
-        for col = 1, BOARD_W do
-            for row = HIDDEN_ROWS + 1, BOARD_H do
-                -- Skip if this row is being cleared
-                local is_cleared = false
-                for _, cr in ipairs(State.AnimFullRows) do
-                    if row == cr then
-                        is_cleared = true
-                        break
-                    end
-                end
-                if is_cleared then
-                    goto continue_row
-                end
-
-                if State.Board[col][row] then
-                    local slide_offset = get_slide_offset(row, State.AnimFullRows)
-                    local slide_y = progress * slide_offset * CELL
-                    local x = BOARD_X + (col - 1) * CELL
-                    local y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL + slide_y
-                    gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, State.Board[col][row])
-                    -- Highlight edge for 3D effect
-                    gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
-                    gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
-                    gfx.px(x + 2, y + 1, gfx.COLOR_LIGHT_GRAY)
-                end
-                ::continue_row::
-            end
-        end
-
-        -- Draw holographic scanline wipe on cleared rows
-        for _, row in ipairs(State.AnimFullRows) do
-            local screen_y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL
-            -- Scanline beam sweeps from top to bottom of the cleared row
-            local beam_width = progress * BOARD_PX_W
-            if beam_width > 0 then
-                -- Bright holographic beam
-                gfx.rect_fill(BOARD_X, screen_y, beam_width, CELL, gfx.COLOR_WHITE)
-                -- Blue glow trail
-                local trail_width = beam_width * 0.5
-                if trail_width > 0 then
-                    gfx.rect_fill(BOARD_X, screen_y, trail_width, CELL, HOLO)
-                end
-            end
-        end
-    else
-        for col = 1, BOARD_W do
-            for row = HIDDEN_ROWS + 1, BOARD_H do
-                if State.Board[col][row] then
-                    local x = BOARD_X + (col - 1) * CELL
-                    local y = BOARD_Y + (row - 1 - HIDDEN_ROWS) * CELL
-                    gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, State.Board[col][row])
-                    -- Highlight edge for 3D effect
-                    gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
-                    gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
-                    gfx.px(x + 2, y + 1, gfx.COLOR_LIGHT_GRAY)
-                end
-            end
-        end
-    end
-
-    -- Ghost piece (only during gameplay, not during animation, visible rows only)
-    if State.GameState == "playing" and State.Cells and not State.Animating then
-        local gy = ghost_y(State.Board, State.Cells, State.PieceX, State.PieceY)
-        if gy ~= State.PieceY then
-            for i = 1, #State.Cells do
-                local c = State.Cells[i]
-                local br_row = gy + c[2] + 1 -- board row (1-indexed)
-                if br_row > HIDDEN_ROWS then -- only draw visible cells
-                    local gx = BOARD_X + (State.PieceX + c[1]) * CELL
-                    local gy_px = BOARD_Y + (br_row - 1 - HIDDEN_ROWS) * CELL
-                    gfx.rect(gx + 1, gy_px + 1, CELL - 2, CELL - 2, gfx.COLOR_BLUE)
-                end
-            end
-        end
-    end
-
-    -- Active piece (visible rows only, not during animation)
-    if State.GameState == "playing" and State.Cells and not State.Animating then
-        local color = PIECE_COLORS[State.Type]
-        for i = 1, #State.Cells do
-            local c = State.Cells[i]
-            local br_row = State.PieceY + c[2] + 1 -- board row (1-indexed)
-            if br_row > HIDDEN_ROWS then -- only draw visible cells
-                local x = BOARD_X + (State.PieceX + c[1]) * CELL
-                local y = BOARD_Y + (br_row - 1 - HIDDEN_ROWS) * CELL
-                gfx.rect_fill(x + 1, y + 1, CELL - 2, CELL - 2, color)
-                -- Highlight edge
-                gfx.px(x + 1, y + 1, gfx.COLOR_LIGHT_GRAY)
-                gfx.px(x + 1, y + 2, gfx.COLOR_LIGHT_GRAY)
-                gfx.px(x + 2, y + 1, gfx.COLOR_LIGHT_GRAY)
-            end
-        end
-    end
-
-    -- Pulsing holographic border
-    local pulse = util.flash(usagi.elapsed, 3)
-    local border_color = pulse and HOLO or gfx.COLOR_BLUE
-    gfx.rect(BOARD_X - 2, BOARD_Y - 2, BOARD_PX_W + 4, BOARD_PX_H + 4, border_color)
-
-    -- Corner accents
-    local cl = 4 -- corner length
-    -- Top-left
-    gfx.line(BOARD_X - 2, BOARD_Y - 2, BOARD_X - 2 + cl, BOARD_Y - 2, HOLO)
-    gfx.line(BOARD_X - 2, BOARD_Y - 2, BOARD_X - 2, BOARD_Y - 2 + cl, HOLO)
-    -- Top-right
-    gfx.line(BOARD_X + BOARD_PX_W + 2 - cl, BOARD_Y - 2, BOARD_X + BOARD_PX_W + 2, BOARD_Y - 2, HOLO)
-    gfx.line(BOARD_X + BOARD_PX_W + 2, BOARD_Y - 2, BOARD_X + BOARD_PX_W + 2, BOARD_Y - 2 + cl, HOLO)
-    -- Bottom-left
-    gfx.line(BOARD_X - 2, BOARD_Y + BOARD_PX_H + 2, BOARD_X - 2 + cl, BOARD_Y + BOARD_PX_H + 2, HOLO)
-    gfx.line(BOARD_X - 2, BOARD_Y + BOARD_PX_H + 2 - cl, BOARD_X - 2, BOARD_Y + BOARD_PX_H + 2, HOLO)
-    -- Bottom-right
-    gfx.line(BOARD_X + BOARD_PX_W + 2 - cl, BOARD_Y + BOARD_PX_H + 2, BOARD_X + BOARD_PX_W + 2,
-        BOARD_Y + BOARD_PX_H + 2, HOLO)
-    gfx.line(BOARD_X + BOARD_PX_W + 2, BOARD_Y + BOARD_PX_H + 2 - cl, BOARD_X + BOARD_PX_W + 2,
-        BOARD_Y + BOARD_PX_H + 2, HOLO)
-end
-
---------------------------------------------------------------------------------
--- Draw: right panel (next piece, score, level, lines)
---------------------------------------------------------------------------------
-function draw_right_panel()
-    local x = PANEL_X
-    local y = BOARD_Y
-
-    -- Panel background
-    gfx.rect_fill(x - 2, y - 2, 100, BOARD_PX_H + 4, gfx.COLOR_BLACK)
-    gfx.rect(x - 2, y - 2, 100, BOARD_PX_H + 4, gfx.COLOR_DARK_GRAY)
-
-    -- "NEXT" label
-    gfx.text("NEXT", x + 4, y, HOLO)
-
-    -- Next piece preview (small grid)
-    local preview_cells = get_cells(State.NextType, 1)
-    local preview_color = PIECE_COLORS[State.NextType]
-    -- Center the preview piece in a small area
-    local min_x, max_x, min_y, max_y = 0, 0, 0, 0
-    for i = 1, #preview_cells do
-        local c = preview_cells[i]
-        if c[1] < min_x then
-            min_x = c[1]
-        end
-        if c[1] > max_x then
-            max_x = c[1]
-        end
-        if c[2] < min_y then
-            min_y = c[2]
-        end
-        if c[2] > max_y then
-            max_y = c[2]
-        end
-    end
-    local pw = (max_x - min_x + 1) * 6
-    local px_offset = x + 4 + (80 - pw) / 2
-    local py_offset = y + 10
-
-    for i = 1, #preview_cells do
-        local c = preview_cells[i]
-        local cx = px_offset + (c[1] - min_x) * 6
-        local cy = py_offset + (c[2] - min_y) * 6
-        gfx.rect_fill(cx, cy, 5, 5, preview_color)
-    end
-
-    -- SCORE
-    local score_y = y + 50
-    gfx.text("SCORE", x + 4, score_y, gfx.COLOR_LIGHT_GRAY)
-    gfx.text(string.format("%06d", State.Score), x + 4, score_y + 10, gfx.COLOR_WHITE)
-
-    -- LEVEL
-    local level_y = y + 80
-    gfx.text("LEVEL", x + 4, level_y, gfx.COLOR_LIGHT_GRAY)
-    gfx.text(tostring(State.Level), x + 4, level_y + 10, gfx.COLOR_YELLOW)
-
-    -- LINES
-    local lines_y = y + 110
-    gfx.text("LINES", x + 4, lines_y, gfx.COLOR_LIGHT_GRAY)
-    gfx.text(tostring(State.Lines), x + 4, lines_y + 10, gfx.COLOR_GREEN)
-
-    -- Controls reference
-    local ctrl_y = y + 140
-    gfx.text("CONTROLS", x + 4, ctrl_y, HOLO)
-    gfx.text("< > MOVE", x + 4, ctrl_y + 10, gfx.COLOR_DARK_GRAY)
-    gfx.text("^ ROTATE", x + 4, ctrl_y + 20, gfx.COLOR_DARK_GRAY)
-    gfx.text("v SOFT", x + 4, ctrl_y + 30, gfx.COLOR_DARK_GRAY)
-    gfx.text("Z DROP", x + 4, ctrl_y + 40, gfx.COLOR_DARK_GRAY)
-end
-
---------------------------------------------------------------------------------
--- Draw: title screen
---------------------------------------------------------------------------------
-function draw_title_screen()
-    -- Title
-    local title = "T E T R I S"
-    local tw, th = usagi.measure_text(title)
-    local tx = (usagi.GAME_W - tw) / 2
-    local ty = 30
-    gfx.text(title, tx, ty, HOLO)
-
-    -- Subtitle
-    local sub = "ORBITAL STATION // BLOCK ASSEMBLY"
-    local sw, _ = usagi.measure_text(sub)
-    local sx = (usagi.GAME_W - sw) / 2
-    gfx.text(sub, sx, ty + 16, gfx.COLOR_BLUE)
-
-    -- Decorative line
-    gfx.line(sx, ty + 28, sx + sw, ty + 28, gfx.COLOR_INDIGO)
-
-    -- Animated piece preview
-    local demo_type = math.random(1, 7)
-    local demo_cells = get_cells(demo_type, 1)
-    local demo_color = PIECE_COLORS[demo_type]
-    local demo_x = usagi.GAME_W / 2 - 16
-    local demo_y = 70
-    for i = 1, #demo_cells do
-        local c = demo_cells[i]
-        gfx.rect_fill(demo_x + c[1] * 8, demo_y + c[2] * 8, 7, 7, demo_color)
-    end
-
-    -- Pulsing "PRESS BTN1" prompt
-    local prompt = "PRESS " .. (input.mapping_for(input.BTN1) or "Z") .. " TO START"
-    local pw, _ = usagi.measure_text(prompt)
-    local px = (usagi.GAME_W - pw) / 2
-    if util.flash(usagi.elapsed, 2) then
-        gfx.text(prompt, px, 110, gfx.COLOR_WHITE)
-    end
-
-    -- Version / credits
-    gfx.text("USAGI ENGINE v1.0", 10, usagi.GAME_H - 10, gfx.COLOR_DARK_GRAY)
-end
-
---------------------------------------------------------------------------------
--- Draw: game over screen (overlay on top of board)
---------------------------------------------------------------------------------
-function draw_game_over_screen()
-    -- Semi-transparent overlay
-    gfx.rect_fill(0, 0, usagi.GAME_W, usagi.GAME_H, gfx.COLOR_BLACK)
-
-    -- Re-draw board dimly in background
-    draw_game_board()
-
-    -- Darken overlay
-    gfx.rect_fill(BOARD_X - 2, BOARD_Y - 2, BOARD_PX_W + 4, BOARD_PX_H + 4, gfx.COLOR_BLACK)
-
-    -- Game over text
-    local go_text = "S Y S T E M   F A I L U R E"
-    local gw, gh = usagi.measure_text(go_text)
-    local gx = (usagi.GAME_W - gw) / 2
-    gfx.text(go_text, gx, 20, gfx.COLOR_RED)
-
-    -- Subtitle
-    local sub = "STRUCTURAL BREACH DETECTED"
-    local sw, _ = usagi.measure_text(sub)
-    gfx.text(sub, (usagi.GAME_W - sw) / 2, 36, gfx.COLOR_ORANGE)
-
-    -- Final stats
-    gfx.text("FINAL SCORE: " .. State.Score, 20, 60, gfx.COLOR_WHITE)
-    gfx.text("LEVEL: " .. State.Level, 20, 74, gfx.COLOR_YELLOW)
-    gfx.text("LINES: " .. State.Lines, 20, 88, gfx.COLOR_GREEN)
-
-    -- Restart prompt
-    local restart = "PRESS " .. (input.mapping_for(input.BTN1) or "Z") .. " TO REBOOT"
-    local rw, _ = usagi.measure_text(restart)
-    if util.flash(usagi.elapsed, 2) then
-        gfx.text(restart, (usagi.GAME_W - rw) / 2, 120, HOLO)
+        render.draw_game_board()
+        render.draw_right_panel()
     end
 end
