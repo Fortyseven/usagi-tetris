@@ -245,7 +245,6 @@ local function spawn_piece()
     State.GameState = "gameover"
   end
 
-  print("SPAWN type=" .. State.Type .. " px=" .. State.PieceX .. " py=" .. State.PieceY .. " dropTimer=" .. State.DropTimer)
 end
 
 --------------------------------------------------------------------------------
@@ -337,10 +336,6 @@ function _init()
     UpHeld = false,
     RotationsThisPiece = 0,
 
-    -- Debug
-    DebugMsg = "",
-    DebugFrame = 0,
-
     -- Effects
     RotFlash = 0,
 
@@ -369,11 +364,6 @@ end
 -- _update: game logic
 --------------------------------------------------------------------------------
 function _update(dt)
-  -- Dev debug key
-  if usagi.IS_DEV and input.key_pressed(input.KEY_F1) then
-    State.ShowDebug = not State.ShowDebug
-  end
-
   if State.GameState == "title" then
     if input.pressed(input.BTN1) then
       State.GameState = "playing"
@@ -435,23 +425,13 @@ function _update(dt)
   local up_now = input.key_held(input.KEY_UP) or input.key_held(input.KEY_W)
   local up_edge = up_now and not State.UpHeld
   if up_edge then
-    local old_rot, old_py = State.Rot, State.PieceY
     local success = try_rotate()
-    State.DebugMsg = string.format("ROT type=%d %d→%d py %d→%d px %d grc=%0.3f cnt=%d → %s",
-      State.Type, old_rot, State.Rot, old_py, State.PieceY, State.PieceX,
-      State.DropTimer, State.RotationsThisPiece, tostring(success))
-    State.DebugFrame = usagi.elapsed
-    print(State.DebugMsg)
     if success then
       sfx.play("rotate")
       State.RotFlash = 0.25  -- white flash for 250ms
     else
       State.RotFlash = -0.15  -- red flash for 150ms
     end
-    State.DebugMsg = string.format("%s type=%d rot %d→%d py %d→%d",
-      success and "ROTATED" or "BLOCKED",
-      State.Type, old_rot, State.Rot, old_py, State.PieceY)
-    State.DebugFrame = usagi.elapsed
   end
   State.UpHeld = up_now
 
@@ -565,15 +545,6 @@ function _draw(dt)
     draw_right_panel()
   end
 
-  -- Debug overlay (prominent, top of screen)
-  if State.DebugMsg and usagi.elapsed - State.DebugFrame < 3 then
-    gfx.rect_fill(0, 0, usagi.GAME_W, 14, gfx.COLOR_BLACK)
-    gfx.text(State.DebugMsg, 4, 2, gfx.COLOR_YELLOW)
-  end
-  if usagi.IS_DEV and State.ShowDebug then
-    gfx.text("DEBUG", 2, usagi.GAME_H - 12, gfx.COLOR_GREEN)
-    gfx.text("L:" .. State.Level .. " S:" .. State.Score, 2, usagi.GAME_H - 2, gfx.COLOR_GREEN)
-  end
 end
 
 --------------------------------------------------------------------------------
