@@ -108,9 +108,16 @@ end
 
 --------------------------------------------------------------------------------
 -- Helper: try to rotate the current piece (with wall kick)
+-- dir: -1 for counter-clockwise, 1 for clockwise
 --------------------------------------------------------------------------------
-local function try_rotate()
-    local new_rot = State.Rot == 1 and 4 or State.Rot - 1 -- 1→4→3→2→1
+local function try_rotate(dir)
+    local new_rot
+    if dir == -1 then
+        new_rot = State.Rot == 1 and 4 or State.Rot - 1 -- 1→4→3→2→1
+    else
+        new_rot = State.Rot == 4 and 1 or State.Rot + 1 -- 1→2→3→4→1
+    end
+
     local new_cells = pieces.get_cells(State.Type, new_rot)
 
     -- Priority 1: no shift at all
@@ -186,7 +193,12 @@ local function process_input_buffer()
                 processed = processed + 1
             end
         elseif action == "rotate" then
-            if try_rotate() then
+            if try_rotate(-1) then
+                sfx.play("rotate")
+                processed = processed + 1
+            end
+        elseif action == "rotate_rev" then
+            if try_rotate(1) then
                 sfx.play("rotate")
                 processed = processed + 1
             end
@@ -323,6 +335,8 @@ function _init()
         -- Input tracking
         UpHeld = false,
         RotationsThisPiece = 0,
+        RotHeld = false,
+        RevRotHeld = false,
 
         -- Line clear animation
         Animating = false,
@@ -419,10 +433,12 @@ function _update(dt)
             table.insert(State.InputBuffer, "left")
         elseif input.pressed(input.RIGHT) then
             table.insert(State.InputBuffer, "right")
-        elseif input.pressed(input.KEY_UP) or input.pressed(input.KEY_W) then
-            table.insert(State.InputBuffer, "rotate")
-        elseif input.pressed(input.BTN1) then
+        elseif input.pressed(input.KEY_UP) or input.pressed(input.KEY_W) or input.pressed(input.UP) then
             table.insert(State.InputBuffer, "hard_drop")
+        elseif input.pressed(input.BTN1) then
+            table.insert(State.InputBuffer, "rotate")
+        elseif input.pressed(input.BTN3) then
+            table.insert(State.InputBuffer, "rotate_rev")
         elseif input.key_pressed(input.KEY_C) or input.pressed(input.BTN2) then
             table.insert(State.InputBuffer, "hold")
         end
@@ -456,14 +472,17 @@ function _update(dt)
     end
 
     -- Rotation (manual edge detection to bypass Usagi input quirks)
-    local up_now = input.key_held(input.KEY_UP) or input.key_held(input.KEY_W) or input.held(input.UP) or input.held(input.BTN3)
-    local up_edge = up_now and not State.UpHeld
-    if up_edge then
-        if try_rotate() then
-            sfx.play("rotate")
-        end
+    local rot_now = input.held(input.BTN1)
+    local rev_rot_now = input.held(input.BTN3)
+
+    if rot_now and not State.RotHeld then
+        if try_rotate(-1) then sfx.play("rotate") end
     end
-    State.UpHeld = up_now
+    if rev_rot_now and not State.RevRotHeld then
+        if try_rotate(1) then sfx.play("rotate") end
+    end
+    State.RotHeld = rot_now
+    State.RevRotHeld = rev_rot_now
 
     -- Soft drop
     local is_soft_dropping = input.held(input.DOWN)
@@ -480,8 +499,8 @@ function _update(dt)
         end
     end
 
-    -- Hard drop
-    if input.pressed(input.BTN1) then
+    -- Hard drop (UP key or D-Pad Up)
+    if input.pressed(input.KEY_UP) or input.pressed(input.KEY_W) or input.pressed(input.UP) then
         hard_drop()
         return -- skip gravity processing this frame
     end
