@@ -168,7 +168,8 @@ end
 local function clear_lines(board)
   local cleared = 0
   local scored_rows = {}
-  for row = BOARD_H, 1, -1 do
+  -- Only check visible rows (hidden rows at top are never cleared)
+  for row = BOARD_H, HIDDEN_ROWS + 1, -1 do
     local full = true
     for col = 1, BOARD_W do
       if not board[col][row] then
@@ -180,14 +181,14 @@ local function clear_lines(board)
       cleared = cleared + 1
       table.insert(scored_rows, row)
       -- Shift everything above down
-      for r = row, 2, -1 do
+      for r = row, HIDDEN_ROWS + 2, -1 do
         for col = 1, BOARD_W do
           board[col][r] = board[col][r - 1] or false
         end
       end
-      -- Clear top row
+      -- Clear row just below hidden area
       for col = 1, BOARD_W do
-        board[col][1] = false
+        board[col][HIDDEN_ROWS + 1] = false
       end
     end
   end
