@@ -35,6 +35,7 @@ local BOARD_PX_H = board.VISIBLE_H * CELL
 local MOVE_COOLDOWN = 0.10
 local ROTATE_COOLDOWN = 0.08
 local SOFT_COOLDOWN = 0.05
+local LOCK_DELAY = 0.5
 
 -- Line clear animation
 local LINE_CLEAR_DURATION = 0.4
@@ -331,6 +332,7 @@ function _init()
         MoveTimer = 0,
         RotateTimer = 0,
         SoftTimer = 0,
+        LockTimer = 0,
 
         -- Input tracking
         UpHeld = false,
@@ -476,10 +478,16 @@ function _update(dt)
     local rev_rot_now = input.held(input.BTN3)
 
     if rot_now and not State.RotHeld then
-        if try_rotate(-1) then sfx.play("rotate") end
+        if try_rotate(-1) then 
+            sfx.play("rotate") 
+            State.LockTimer = LOCK_DELAY
+        end
     end
     if rev_rot_now and not State.RevRotHeld then
-        if try_rotate(1) then sfx.play("rotate") end
+        if try_rotate(1) then 
+            sfx.play("rotate") 
+            State.LockTimer = LOCK_DELAY
+        end
     end
     State.RotHeld = rot_now
     State.RevRotHeld = rev_rot_now
@@ -494,6 +502,7 @@ function _update(dt)
             State.DropTimer = 0 -- reset gravity timer on soft drop
             sfx.play("drop")
         else
+            -- Soft drop into lock: immediately lock without delay
             lock_piece()
             return -- skip gravity for the newly spawned piece
         end
@@ -515,12 +524,21 @@ function _update(dt)
     local interval = is_soft_dropping and math.min(scoring.drop_interval(State.Level), 0.05) or
                          scoring.drop_interval(State.Level)
     State.DropTimer = State.DropTimer + dt
+
+    -- Handle lock delay window
+    if State.LockTimer > 0 then
+        State.LockTimer = State.LockTimer - dt
+    end
+
     if State.DropTimer >= interval then
         State.DropTimer = State.DropTimer - interval
         if not board.collides(State.Board, State.Cells, State.PieceX, State.PieceY + 1) then
             State.PieceY = State.PieceY + 1
         else
-            lock_piece()
+            -- Piece has hit the bottom/another piece
+            if State.LockTimer <= 0 then
+                lock_piece()
+            end
         end
     end
 end
