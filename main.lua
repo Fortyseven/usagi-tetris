@@ -478,14 +478,14 @@ function _update(dt)
     local rev_rot_now = input.held(input.BTN3)
 
     if rot_now and not State.RotHeld then
-        if try_rotate(-1) then 
-            sfx.play("rotate") 
+        if try_rotate(-1) then
+            sfx.play("rotate")
             State.LockTimer = LOCK_DELAY
         end
     end
     if rev_rot_now and not State.RevRotHeld then
-        if try_rotate(1) then 
-            sfx.play("rotate") 
+        if try_rotate(1) then
+            sfx.play("rotate")
             State.LockTimer = LOCK_DELAY
         end
     end

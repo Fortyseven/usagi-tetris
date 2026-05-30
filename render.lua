@@ -1,7 +1,6 @@
 -- render.lua — All rendering functions
 -- Exports: draw_background(), draw_game_board(), draw_right_panel(),
 --          draw_title_screen(), draw_game_over_screen()
-
 local board = require("board")
 local pieces = require("pieces")
 

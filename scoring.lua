@@ -1,7 +1,6 @@
 -- scoring.lua — Score calculation, level progression, drop speed curve
 -- Exports: drop_interval(level), calculate_score(lines_cleared, level),
 --          calculate_new_level(lines), SCORE_TABLE, LINES_PER_LEVEL, MAX_LEVEL
-
 --------------------------------------------------------------------------------
 -- Scoring constants
 --------------------------------------------------------------------------------

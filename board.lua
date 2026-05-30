@@ -1,7 +1,6 @@
 -- board.lua — Grid management, collision detection, line clears
 -- Exports: new_board(), collides(), ghost_y(), place_piece(),
 --          find_full_lines(), apply_line_clears(), get_slide_offset()
-
 --------------------------------------------------------------------------------
 -- Board dimensions
 --------------------------------------------------------------------------------
